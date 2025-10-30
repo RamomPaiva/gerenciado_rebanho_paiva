@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
   Circle, 
   Package, 
@@ -52,10 +53,20 @@ import {
   Receipt,
   TrendingDown,
   Target,
-  Zap
+  Zap,
+  TreePine,
+  LogOut,
+  User,
+  Camera,
+  Upload,
+  Info,
+  Menu
 } from 'lucide-react';
 
 export default function RebanhoManager() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  
   // Estados principais
   const [activeTab, setActiveTab] = useState('dashboard');
   const [animais, setAnimais] = useState([]);
@@ -66,6 +77,7 @@ export default function RebanhoManager() {
   const [custosVaqueiro, setCustosVaqueiro] = useState([]);
   const [custosManutencao, setCustosManutencao] = useState([]);
   const [recomendacoes, setRecomendacoes] = useState([]);
+  const [mangas, setMangas] = useState([]);
   
   // Estados para estatísticas
   const [stats, setStats] = useState({
@@ -92,6 +104,7 @@ export default function RebanhoManager() {
   const [showManejoModal, setShowManejoModal] = useState(false);
   const [showCustoModal, setShowCustoModal] = useState(false);
   const [showAquisicaoModal, setShowAquisicaoModal] = useState(false);
+  const [showMangaModal, setShowMangaModal] = useState(false);
   const [custoModalType, setCustoModalType] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
 
@@ -133,6 +146,39 @@ export default function RebanhoManager() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('todos');
 
+  // Estados para foto do nascimento
+  const [fotoNascimento, setFotoNascimento] = useState(null);
+  const [previewFoto, setPreviewFoto] = useState(null);
+
+  // Estados para pesagem individual com histórico e medicamentos
+  const [animalSelecionadoPesagem, setAnimalSelecionadoPesagem] = useState(null);
+  const [ultimasPesagens, setUltimasPesagens] = useState([]);
+  const [medicamentoAplicado, setMedicamentoAplicado] = useState({
+    aplicar: false,
+    medicamento: '',
+    dosagem: '',
+    unidade: 'ml'
+  });
+
+  // Estado para controle da sidebar mobile
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Verificar autenticação
+  useEffect(() => {
+    const userData = localStorage.getItem('currentUser');
+    if (!userData) {
+      window.location.href = '/login';
+      return;
+    }
+    setCurrentUser(JSON.parse(userData));
+  }, []);
+
+  // Função de logout
+  const handleLogout = () => {
+    localStorage.removeItem('currentUser');
+    window.location.href = '/login';
+  };
+
   // Funções utilitárias
   const gerarId = () => Math.random().toString(36).substr(2, 9);
 
@@ -172,6 +218,59 @@ export default function RebanhoManager() {
     return custoTotal / animais.length;
   };
 
+  // Função para buscar últimas pesagens de um animal
+  const buscarUltimasPesagens = (animalId) => {
+    const animal = animais.find(a => a.id === animalId);
+    if (!animal || !animal.historicoPesagens) return [];
+    
+    return animal.historicoPesagens
+      .sort((a, b) => new Date(b.data) - new Date(a.data))
+      .slice(0, 3);
+  };
+
+  // Função para aplicar medicamento e fazer baixa no estoque
+  const aplicarMedicamentoComBaixa = (medicamentoId, dosagem, unidade) => {
+    const medicamento = medicamentos.find(m => m.id === medicamentoId);
+    if (!medicamento) return { sucesso: false, erro: 'Medicamento não encontrado' };
+
+    // Converter dosagem para unidade base do medicamento
+    let dosagemuUsada = parseFloat(dosagem);
+    
+    // Verificar se há estoque suficiente
+    if (medicamento.quantidade < dosagemuUsada) {
+      return { 
+        sucesso: false, 
+        erro: `Estoque insuficiente. Disponível: ${medicamento.quantidade} ${medicamento.unidade}` 
+      };
+    }
+
+    // Calcular custo baseado na utilização
+    const custoPorUnidade = medicamento.preco / medicamento.quantidade;
+    const custoAplicacao = custoPorUnidade * dosagemuUsada;
+
+    // Fazer baixa no estoque
+    const medicamentosAtualizados = medicamentos.map(m => {
+      if (m.id === medicamentoId) {
+        return {
+          ...m,
+          quantidade: m.quantidade - dosagemuUsada,
+          dataUltimaUtilizacao: new Date().toISOString()
+        };
+      }
+      return m;
+    });
+
+    setMedicamentos(medicamentosAtualizados);
+    saveToStorage('medicamentos', medicamentosAtualizados);
+
+    return { 
+      sucesso: true, 
+      custoAplicacao,
+      medicamento: medicamento.nome,
+      dosagem: `${dosagemuUsada} ${unidade}`
+    };
+  };
+
   // Carregar dados do localStorage
   useEffect(() => {
     const loadData = () => {
@@ -184,6 +283,7 @@ export default function RebanhoManager() {
         setCustosVaqueiro(JSON.parse(localStorage.getItem('custosVaqueiro') || '[]'));
         setCustosManutencao(JSON.parse(localStorage.getItem('custosManutencao') || '[]'));
         setRecomendacoes(JSON.parse(localStorage.getItem('recomendacoes') || '[]'));
+        setMangas(JSON.parse(localStorage.getItem('mangas') || '[]'));
       } catch (error) {
         console.error('Erro ao carregar dados:', error);
       }
@@ -231,20 +331,22 @@ export default function RebanhoManager() {
         return proximaData <= hoje;
       }).length;
 
+      const mangasOcupadas = mangas.filter(m => m.status === 'lotacao').length;
+
       setStats({
         totalAnimais,
         animaisPorFase,
         gmdMedio,
         custoMedioPorAnimal,
         produtosEmFalta,
-        mangasOcupadas: 0,
+        mangasOcupadas,
         medicamentosVencendo,
         manejosPendentes
       });
     };
 
     calcularEstatisticas();
-  }, [animais, produtos, medicamentos, manejos, custosArrendamento, custosVaqueiro, custosManutencao]);
+  }, [animais, produtos, medicamentos, manejos, custosArrendamento, custosVaqueiro, custosManutencao, mangas]);
 
   // ========== SISTEMA DE MESCLAGEM INCREMENTAL ==========
 
@@ -279,6 +381,104 @@ export default function RebanhoManager() {
     });
 
     return resultado;
+  };
+
+  // ========== SISTEMA DE MANGAS ==========
+
+  const verificarAlertasManga = () => {
+    const hoje = new Date();
+    const alertas = [];
+
+    mangas.forEach(manga => {
+      if (manga.status === 'lotacao' && manga.dataEntradaRebanho) {
+        const dataEntrada = new Date(manga.dataEntradaRebanho);
+        const diasLotacao = Math.ceil((hoje - dataEntrada) / (1000 * 60 * 60 * 24));
+        
+        // Alerta quando faltam 3 dias para completar 15 dias
+        if (diasLotacao >= 12 && diasLotacao < 15) {
+          alertas.push({
+            tipo: 'manga_proxima_mudanca',
+            manga: manga.nome,
+            diasRestantes: 15 - diasLotacao,
+            message: `Manga ${manga.nome} deve ser mudada em ${15 - diasLotacao} dias`
+          });
+        }
+        
+        // Alerta quando passou de 15 dias
+        if (diasLotacao >= 15) {
+          alertas.push({
+            tipo: 'manga_vencida',
+            manga: manga.nome,
+            diasExcedidos: diasLotacao - 15,
+            message: `Manga ${manga.nome} passou ${diasLotacao - 15} dias do prazo de mudança`
+          });
+        }
+      }
+    });
+
+    return alertas;
+  };
+
+  const adicionarManga = () => {
+    const errors = validateForm(formData, 'manga');
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+
+    const novaManga = {
+      id: gerarId(),
+      nome: formData.nomeManga,
+      tamanhoHa: parseFloat(formData.tamanhoHa),
+      status: formData.statusManga,
+      dataEntradaRebanho: formData.dataEntradaRebanho || null,
+      dataSaidaRebanho: formData.dataSaidaRebanho || null,
+      brincosRebanho: formData.brincosRebanho ? formData.brincosRebanho.split(',').map(b => b.trim()).filter(b => b) : [],
+      observacoes: formData.observacoes || '',
+      dataAtualizacao: new Date().toISOString(),
+      historico: [{
+        data: new Date().toISOString(),
+        acao: 'criacao',
+        descricao: `Manga ${formData.nomeManga} criada com ${formData.tamanhoHa} ha`
+      }]
+    };
+
+    const novasMangas = [...mangas, novaManga];
+    setMangas(novasMangas);
+    saveToStorage('mangas', novasMangas);
+    setShowMangaModal(false);
+    setFormData({});
+    setFormErrors({});
+    alert('Manga cadastrada com sucesso!');
+  };
+
+  const atualizarStatusManga = (mangaId, novoStatus, dadosAdicionais = {}) => {
+    const mangasAtualizadas = mangas.map(manga => {
+      if (manga.id === mangaId) {
+        const mangaAtualizada = {
+          ...manga,
+          status: novoStatus,
+          ...dadosAdicionais,
+          dataAtualizacao: new Date().toISOString()
+        };
+
+        // Adicionar ao histórico
+        if (!mangaAtualizada.historico) mangaAtualizada.historico = [];
+        mangaAtualizada.historico.push({
+          data: new Date().toISOString(),
+          acao: 'mudanca_status',
+          statusAnterior: manga.status,
+          statusNovo: novoStatus,
+          descricao: `Status alterado de ${manga.status} para ${novoStatus}`
+        });
+
+        return mangaAtualizada;
+      }
+      return manga;
+    });
+
+    setMangas(mangasAtualizadas);
+    saveToStorage('mangas', mangasAtualizadas);
   };
 
   // ========== AUTOMAÇÕES DO REBANHO ==========
@@ -339,6 +539,108 @@ export default function RebanhoManager() {
     alert('Pesagem em lote realizada com sucesso! Histórico completo preservado.');
   };
 
+  // Função para processar pesagem individual com medicamento
+  const processarPesagemIndividual = () => {
+    if (!animalSelecionadoPesagem || !pesagemLoteData[animalSelecionadoPesagem.id]) {
+      alert('Selecione um animal e informe o peso.');
+      return;
+    }
+
+    const pesoNovo = pesagemLoteData[animalSelecionadoPesagem.id];
+    let custoMedicamento = 0;
+    let medicamentoInfo = null;
+
+    // Aplicar medicamento se selecionado
+    if (medicamentoAplicado.aplicar && medicamentoAplicado.medicamento && medicamentoAplicado.dosagem) {
+      const resultado = aplicarMedicamentoComBaixa(
+        medicamentoAplicado.medicamento,
+        medicamentoAplicado.dosagem,
+        medicamentoAplicado.unidade
+      );
+
+      if (!resultado.sucesso) {
+        alert(resultado.erro);
+        return;
+      }
+
+      custoMedicamento = resultado.custoAplicacao;
+      medicamentoInfo = {
+        nome: resultado.medicamento,
+        dosagem: resultado.dosagem,
+        custo: custoMedicamento,
+        dataAplicacao: new Date().toISOString()
+      };
+    }
+
+    // Atualizar animal
+    const animaisAtualizados = animais.map(animal => {
+      if (animal.id === animalSelecionadoPesagem.id) {
+        const pesoAnterior = animal.pesoAtual;
+        const gmd = calcularGMDAutomatico(animal.pesoInicial || pesoNovo, pesoNovo, animal.dataEntradaFase);
+        const arrobaTotal = calcularArrobaTotal(pesoNovo);
+        const valorTotal = calcularValorTotal(arrobaTotal, animal.precoArroba || 0);
+
+        const historicoPesagens = [...(animal.historicoPesagens || [])];
+        historicoPesagens.push({
+          data: pesagemLoteDate,
+          pesoAnterior,
+          pesoAtual: pesoNovo,
+          gmd: parseFloat(gmd.toFixed(3)),
+          medicamentoAplicado: medicamentoInfo
+        });
+
+        return mesclagem(animal, {
+          pesoAtual: pesoNovo,
+          gmd: parseFloat(gmd.toFixed(3)),
+          arrobaTotal: parseFloat(arrobaTotal.toFixed(2)),
+          valorTotal: parseFloat(valorTotal.toFixed(2)),
+          historicoPesagens,
+          dataUltimaPesagem: pesagemLoteDate,
+          custoAcumulado: (animal.custoAcumulado || 0) + custoMedicamento
+        });
+      }
+      return animal;
+    });
+
+    setAnimais(animaisAtualizados);
+    saveToStorage('animais', animaisAtualizados);
+    
+    // Reset
+    setAnimalSelecionadoPesagem(null);
+    setUltimasPesagens([]);
+    setMedicamentoAplicado({ aplicar: false, medicamento: '', dosagem: '', unidade: 'ml' });
+    setPesagemLoteData({});
+    
+    alert(`Pesagem registrada com sucesso!${medicamentoInfo ? ` Medicamento aplicado: ${medicamentoInfo.nome} - ${medicamentoInfo.dosagem}` : ''}`);
+  };
+
+  // Função para lidar com upload de foto
+  const handleFotoUpload = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      // Verificar se é uma imagem
+      if (!file.type.startsWith('image/')) {
+        alert('Por favor, selecione apenas arquivos de imagem.');
+        return;
+      }
+      
+      // Verificar tamanho (máximo 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('A imagem deve ter no máximo 5MB.');
+        return;
+      }
+
+      setFotoNascimento(file);
+      
+      // Criar preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setPreviewFoto(e.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const registrarNascimento = () => {
     const errors = validateForm(formData, 'nascimento');
     if (Object.keys(errors).length > 0) {
@@ -363,6 +665,13 @@ export default function RebanhoManager() {
       status: 'ativo',
       observacoes: formData.observacoes || '',
       brincoMae: formData.brincoMae || '', // Campo específico para brinco da mãe
+      fotoNascimento: previewFoto || null, // Salvar a foto se houver
+      aplicacaoADE: {
+        aplicado: true,
+        dataAplicacao: formData.dataNascimento,
+        dosagem: '3 mL',
+        proximaAplicacao: new Date(new Date(formData.dataNascimento).getTime() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // 60 dias após nascimento
+      },
       historicoPesagens: [{
         data: formData.dataNascimento,
         pesoAnterior: 0,
@@ -382,6 +691,8 @@ export default function RebanhoManager() {
     saveToStorage('animais', novosAnimais);
     setShowNascimentoModal(false);
     setFormData({});
+    setFotoNascimento(null);
+    setPreviewFoto(null);
     alert('Nascimento registrado com sucesso! Animal adicionado ao Dashboard automaticamente.');
   };
 
@@ -393,7 +704,8 @@ export default function RebanhoManager() {
         `${animais.length} animais sincronizados`,
         `${produtos.length} produtos sincronizados`,
         `${medicamentos.length} medicamentos sincronizados`,
-        `${manejos.length} manejos sincronizados`
+        `${manejos.length} manejos sincronizados`,
+        `${mangas.length} mangas sincronizadas`
       ],
       status: 'sucesso',
       tipo: 'sincronizacao_incremental',
@@ -444,6 +756,19 @@ export default function RebanhoManager() {
     setShowDeleteConfirm(false);
     setItemToDelete(null);
     alert(`Medicamento ${itemToDelete.nome} foi excluído com sucesso!`);
+  };
+
+  // Função para excluir manga
+  const excluirManga = () => {
+    if (!itemToDelete) return;
+
+    const mangasAtualizadas = mangas.filter(manga => manga.id !== itemToDelete.id);
+    setMangas(mangasAtualizadas);
+    saveToStorage('mangas', mangasAtualizadas);
+    
+    setShowDeleteConfirm(false);
+    setItemToDelete(null);
+    alert(`Manga ${itemToDelete.nome} foi excluída com sucesso!`);
   };
 
   // Função para registrar aquisição de animal
@@ -536,6 +861,16 @@ export default function RebanhoManager() {
         if (!data.dataPrevisaoVenda) errors.dataPrevisaoVenda = 'Data de previsão de venda é obrigatória';
         break;
 
+      case 'manga':
+        if (!data.nomeManga?.trim()) errors.nomeManga = 'Nome da manga é obrigatório';
+        if (!data.tamanhoHa || data.tamanhoHa <= 0) errors.tamanhoHa = 'Tamanho em hectares deve ser maior que zero';
+        if (!data.statusManga) errors.statusManga = 'Status é obrigatório';
+        if (data.statusManga === 'lotacao') {
+          if (!data.dataEntradaRebanho) errors.dataEntradaRebanho = 'Data de entrada do rebanho é obrigatória para status lotação';
+          if (!data.brincosRebanho?.trim()) errors.brincosRebanho = 'Brincos do rebanho são obrigatórios para status lotação';
+        }
+        break;
+
       case 'produto':
         if (!data.nome?.trim()) errors.nome = 'Nome é obrigatório';
         if (!data.categoria) errors.categoria = 'Categoria é obrigatória';
@@ -600,13 +935,20 @@ export default function RebanhoManager() {
   // Função para gerar recomendações IA
   const gerarRecomendacoes = async () => {
     const custos = calcularCustosDetalhados();
+    const alertasMangas = verificarAlertasManga();
     
     let titulo = '';
     let descricao = '';
     let categoria = 'manejo';
     let prioridade = 'media';
 
-    if (stats.gmdMedio < 0.5) {
+    if (alertasMangas.length > 0) {
+      const alertaManga = alertasMangas[0];
+      titulo = alertaManga.tipo === 'manga_vencida' ? 'Manga com Prazo Vencido' : 'Manga Próxima da Mudança';
+      descricao = alertaManga.message;
+      categoria = 'manejo';
+      prioridade = alertaManga.tipo === 'manga_vencida' ? 'alta' : 'media';
+    } else if (stats.gmdMedio < 0.5) {
       titulo = 'GMD Baixo Detectado';
       descricao = `GMD médio de ${stats.gmdMedio.toFixed(3)} kg/dia está abaixo do ideal. Considere revisar a nutrição e suplementação mineral.`;
       categoria = 'nutricao';
@@ -790,98 +1132,184 @@ export default function RebanhoManager() {
     setFormErrors({});
   };
 
-  // Componente de Navegação
-  const renderNavigation = () => {
+  // Componente de Sidebar
+  const renderSidebar = () => {
     const navItems = [
       { id: 'dashboard', label: 'Dashboard', icon: Home },
       { id: 'rebanho', label: 'Rebanho', icon: Users },
       { id: 'estoque', label: 'Estoque', icon: Package },
       { id: 'manejo', label: 'Manejo', icon: Stethoscope },
+      { id: 'manga', label: 'Manga', icon: TreePine },
       { id: 'custos', label: 'Custos', icon: DollarSign }
     ];
 
     return (
-      <nav className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-8">
-              {/* Logo da Fazenda Paiva 1 */}
-              <div className="flex items-center space-x-3">
-                <img 
-                  src="https://k6hrqrxuu8obbfwn.public.blob.vercel-storage.com/temp/c085bc25-0abd-446c-9cf6-be4efb03d153.jpg" 
-                  alt="Fazenda Paiva 1" 
-                  className="h-10 w-auto"
-                />
-                <div>
-                  <span className="text-xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-                    AgroManager Pro
-                  </span>
-                  <p className="text-xs text-gray-500 -mt-1">Gestão Inteligente Rural</p>
-                </div>
+      <>
+        {/* Overlay para mobile */}
+        {sidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        {/* Sidebar */}
+        <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}>
+          <div className="flex flex-col h-full">
+            {/* Header da Sidebar */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <div className="text-xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent flex items-center space-x-8 lasy-highlight">
+                Pecuária Paiva
               </div>
-              
-              <div className="hidden md:flex space-x-8">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Navegação */}
+            <nav className="flex-1 px-4 py-6 space-y-2">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setSidebarOpen(false);
+                    }}
+                    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                      activeTab === item.id
+                        ? 'bg-green-100 text-green-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Alertas na Sidebar */}
+            <div className="px-4 py-4 border-t border-gray-200">
+              <div className="space-y-2">
+                {stats.produtosEmFalta > 0 && (
+                  <div className="flex items-center space-x-2 text-red-600 text-sm">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>{stats.produtosEmFalta} produtos em falta</span>
+                  </div>
+                )}
+                
+                {stats.medicamentosVencendo > 0 && (
+                  <div className="flex items-center space-x-2 text-yellow-600 text-sm">
+                    <Clock className="w-4 h-4" />
+                    <span>{stats.medicamentosVencendo} medicamentos vencendo</span>
+                  </div>
+                )}
+
+                {verificarAlertasManga().length > 0 && (
+                  <div className="flex items-center space-x-2 text-orange-600 text-sm">
+                    <TreePine className="w-4 h-4" />
+                    <span>{verificarAlertasManga().length} alertas de manga</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* User Info na Sidebar */}
+            {currentUser && (
+              <div className="px-4 py-4 border-t border-gray-200">
+                <div className="flex items-center space-x-3 mb-3">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">{currentUser.name}</div>
+                    <div className="text-xs text-gray-500">{currentUser.permissions}</div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  {currentUser.permissions === 'Admin' && (
                     <button
-                      key={item.id}
-                      onClick={() => setActiveTab(item.id)}
-                      className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                        activeTab === item.id
-                          ? 'bg-green-100 text-green-700'
-                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                      }`}
+                      onClick={() => window.location.href = '/admin/users'}
+                      className="flex-1 flex items-center justify-center space-x-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                      title="Gerenciar Usuários"
                     >
-                      <Icon className="w-4 h-4" />
-                      <span>{item.label}</span>
+                      <User className="w-4 h-4" />
+                      <span>Admin</span>
                     </button>
-                  );
-                })}
+                  )}
+                  <button
+                    onClick={handleLogout}
+                    className="flex-1 flex items-center justify-center space-x-2 px-3 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                    title="Sair"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Sair</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  // Componente de Header
+  const renderHeader = () => {
+    return (
+      <header className="bg-white shadow-sm border-b border-gray-200 lg:ml-64">
+        <div className="px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            {/* Botão do menu mobile */}
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+
+            {/* Título da página atual */}
+            <div className="flex-1 lg:flex-none">
+              <h1 className="text-xl font-semibold text-gray-900 capitalize">
+                {activeTab === 'dashboard' ? 'Dashboard' : activeTab}
+              </h1>
+            </div>
+
+            {/* Filtros de Data */}
+            <div className="hidden md:flex items-center space-x-4">
+              <div className="flex items-center space-x-3">
+                <Filter className="w-4 h-4 text-gray-500" />
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Data Inicial
+                  </label>
+                  <input
+                    type="date"
+                    value={dateFilter.startDate}
+                    onChange={(e) => setDateFilter({...dateFilter, startDate: e.target.value})}
+                    className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Data Final
+                  </label>
+                  <input
+                    type="date"
+                    value={dateFilter.endDate}
+                    onChange={(e) => setDateFilter({...dateFilter, endDate: e.target.value})}
+                    className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
               </div>
             </div>
-
-            <div className="flex items-center space-x-4">
-              {stats.produtosEmFalta > 0 && (
-                <div className="flex items-center space-x-1 text-red-600">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span className="text-sm font-medium">{stats.produtosEmFalta}</span>
-                </div>
-              )}
-              
-              {stats.medicamentosVencendo > 0 && (
-                <div className="flex items-center space-x-1 text-yellow-600">
-                  <Clock className="w-4 h-4" />
-                  <span className="text-sm font-medium">{stats.medicamentosVencendo}</span>
-                </div>
-              )}
-            </div>
           </div>
         </div>
-
-        {/* Mobile Navigation */}
-        <div className="md:hidden border-t border-gray-200">
-          <div className="px-2 py-3 space-y-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center space-x-2 w-full px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    activeTab === item.id
-                      ? 'bg-green-100 text-green-700'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </nav>
+      </header>
     );
   };
 
@@ -891,42 +1319,6 @@ export default function RebanhoManager() {
 
     return (
       <div className="space-y-6">
-
-
-        {/* Filtro de Data - TAMANHO REDUZIDO CONFORME SOLICITADO */}
-        <div className="bg-white p-3 rounded-lg shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Filter className="w-4 h-4 text-gray-600" />
-              <h3 className="text-sm font-semibold text-gray-900">Período de Análise</h3>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Data Inicial
-                </label>
-                <input
-                  type="date"
-                  value={dateFilter.startDate}
-                  onChange={(e) => setDateFilter({...dateFilter, startDate: e.target.value})}
-                  className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Data Final
-                </label>
-                <input
-                  type="date"
-                  value={dateFilter.endDate}
-                  onChange={(e) => setDateFilter({...dateFilter, endDate: e.target.value})}
-                  className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* Botões de Automação */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
           <div className="flex items-center justify-between mb-4">
@@ -956,6 +1348,8 @@ export default function RebanhoManager() {
               onClick={() => {
                 setFormData({});
                 setFormErrors({});
+                setFotoNascimento(null);
+                setPreviewFoto(null);
                 setShowNascimentoModal(true);
               }}
               className="flex flex-col items-center space-y-2 p-3 bg-pink-50 hover:bg-pink-100 rounded-lg transition-colors"
@@ -1054,7 +1448,7 @@ export default function RebanhoManager() {
         </div>
 
         {/* Alertas */}
-        {(stats.produtosEmFalta > 0 || stats.medicamentosVencendo > 0 || stats.manejosPendentes > 0) && (
+        {(stats.produtosEmFalta > 0 || stats.medicamentosVencendo > 0 || stats.manejosPendentes > 0 || verificarAlertasManga().length > 0) && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <div className="flex items-center space-x-2 mb-2">
               <AlertTriangle className="w-5 h-5 text-yellow-600" />
@@ -1070,6 +1464,9 @@ export default function RebanhoManager() {
               {stats.manejosPendentes > 0 && (
                 <p>• {stats.manejosPendentes} manejo(s) sanitário(s) pendente(s)</p>
               )}
+              {verificarAlertasManga().map((alerta, index) => (
+                <p key={index}>• {alerta.message}</p>
+              ))}
             </div>
           </div>
         )}
@@ -1711,6 +2108,217 @@ export default function RebanhoManager() {
     );
   };
 
+  // Renderizar Manga - NOVA FUNCIONALIDADE SOLICITADA
+  const renderManga = () => {
+    const alertasMangas = verificarAlertasManga();
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-gray-900">Gestão de Mangas</h2>
+          <button
+            onClick={() => {
+              setFormData({});
+              setFormErrors({});
+              setEditingItem(null);
+              setShowMangaModal(true);
+            }}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Adicionar Manga</span>
+          </button>
+        </div>
+
+        {/* Alertas de Mangas */}
+        {alertasMangas.length > 0 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+            <div className="flex items-center space-x-2 mb-2">
+              <AlertTriangle className="w-5 h-5 text-orange-600" />
+              <h3 className="text-sm font-medium text-orange-800">Alertas de Mangas</h3>
+            </div>
+            <div className="space-y-1 text-sm text-orange-700">
+              {alertasMangas.map((alerta, index) => (
+                <p key={index}>• {alerta.message}</p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Resumo de Mangas */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Mangas</p>
+                <p className="text-2xl font-bold text-gray-900">{mangas.length}</p>
+              </div>
+              <div className="p-3 bg-green-100 rounded-lg">
+                <TreePine className="w-6 h-6 text-green-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Em Lotação</p>
+                <p className="text-2xl font-bold text-orange-600">{stats.mangasOcupadas}</p>
+              </div>
+              <div className="p-3 bg-orange-100 rounded-lg">
+                <Users className="w-6 h-6 text-orange-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Descanso</p>
+                <p className="text-2xl font-bold text-blue-600">{mangas.filter(m => m.status === 'descanso').length}</p>
+              </div>
+              <div className="p-3 bg-blue-100 rounded-lg">
+                <Clock className="w-6 h-6 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Reforma</p>
+                <p className="text-2xl font-bold text-red-600">{mangas.filter(m => m.status === 'reforma pasto').length}</p>
+              </div>
+              <div className="p-3 bg-red-100 rounded-lg">
+                <Wrench className="w-6 h-6 text-red-600" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Lista de Mangas */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Manga
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tamanho (ha)
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Entrada Rebanho
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Dias Lotação
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Brincos
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Ações
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {mangas.map((manga) => {
+                  const hoje = new Date();
+                  const diasLotacao = manga.dataEntradaRebanho ? 
+                    Math.ceil((hoje - new Date(manga.dataEntradaRebanho)) / (1000 * 60 * 60 * 24)) : 0;
+                  
+                  return (
+                    <tr key={manga.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{manga.nome}</div>
+                        {manga.observacoes && (
+                          <div className="text-sm text-gray-500">{manga.observacoes}</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {manga.tamanhoHa} ha
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          manga.status === 'lotacao' ? 'bg-orange-100 text-orange-800' :
+                          manga.status === 'descanso' ? 'bg-blue-100 text-blue-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {manga.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {manga.dataEntradaRebanho ? 
+                          new Date(manga.dataEntradaRebanho).toLocaleDateString('pt-BR') : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {manga.status === 'lotacao' && diasLotacao > 0 ? (
+                          <span className={`text-sm ${
+                            diasLotacao >= 15 ? 'text-red-600 font-medium' :
+                            diasLotacao >= 12 ? 'text-orange-600 font-medium' :
+                            'text-gray-900'
+                          }`}>
+                            {diasLotacao} dias
+                          </span>
+                        ) : (
+                          <span className="text-sm text-gray-500">-</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {manga.brincosRebanho && manga.brincosRebanho.length > 0 ? (
+                          <div className="max-w-32 truncate" title={manga.brincosRebanho.join(', ')}>
+                            {manga.brincosRebanho.slice(0, 3).join(', ')}
+                            {manga.brincosRebanho.length > 3 && '...'}
+                          </div>
+                        ) : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => {
+                              setFormData(manga);
+                              setEditingItem(manga);
+                              setShowMangaModal(true);
+                            }}
+                            className="text-indigo-600 hover:text-indigo-900"
+                            title="Editar manga"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setItemToDelete(manga);
+                              setShowDeleteConfirm(true);
+                            }}
+                            className="text-red-600 hover:text-red-900"
+                            title="Excluir manga"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {mangas.length === 0 && (
+            <div className="text-center py-8 text-gray-500">
+              <TreePine className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+              <p>Nenhuma manga cadastrada.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // Renderizar Custos
   const renderCustos = () => {
     const custos = calcularCustosDetalhados();
@@ -1908,7 +2516,8 @@ export default function RebanhoManager() {
 
           <div className="mb-6">
             <p className="text-gray-700">
-              Tem certeza de que deseja excluir {itemToDelete?.brinco ? `o animal ${itemToDelete.brinco}` : `o item ${itemToDelete?.nome}`}?
+              Tem certeza de que deseja excluir {itemToDelete?.brinco ? `o animal ${itemToDelete.brinco}` : 
+              itemToDelete?.nome ? `o item ${itemToDelete.nome}` : 'este item'}?
             </p>
             <p className="text-sm text-gray-500 mt-2">
               Todos os dados relacionados serão permanentemente removidos.
@@ -1933,6 +2542,8 @@ export default function RebanhoManager() {
                   excluirProduto();
                 } else if (itemToDelete?.tipo) {
                   excluirMedicamento();
+                } else if (itemToDelete?.tamanhoHa) {
+                  excluirManga();
                 }
               }}
               className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center space-x-2"
@@ -2132,6 +2743,8 @@ export default function RebanhoManager() {
         return renderEstoque();
       case 'manejo':
         return renderManejo();
+      case 'manga':
+        return renderManga();
       case 'custos':
         return renderCustos();
       default:
@@ -2139,11 +2752,11 @@ export default function RebanhoManager() {
     }
   };
 
-  // Modal de Pesagem em Lote
+  // Modal de Pesagem em Lote ATUALIZADO COM FUNCIONALIDADES SOLICITADAS
   const renderPesagemLoteModal = () => (
     showPesagemLoteModal && (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-y-auto">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold text-gray-900">Cadastrar Pesagem do Rebanho</h3>
             <button
@@ -2166,11 +2779,173 @@ export default function RebanhoManager() {
             />
           </div>
 
+          {/* Seção de Pesagem Individual com Histórico */}
+          {animalSelecionadoPesagem && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="text-md font-medium text-blue-900 mb-3">
+                Pesagem Individual - {animalSelecionadoPesagem.brinco}
+              </h4>
+              
+              {/* Histórico das 3 últimas pesagens */}
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-blue-800 mb-2">Últimas 3 Pesagens:</h5>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {ultimasPesagens.length > 0 ? ultimasPesagens.map((pesagem, index) => (
+                    <div key={index} className="p-3 bg-white rounded border">
+                      <div className="text-xs text-gray-500">{new Date(pesagem.data).toLocaleDateString('pt-BR')}</div>
+                      <div className="text-sm font-medium">{pesagem.pesoAtual} kg</div>
+                      <div className="text-xs text-gray-600">GMD: {pesagem.gmd.toFixed(3)} kg/dia</div>
+                    </div>
+                  )) : (
+                    <div className="col-span-3 text-sm text-gray-500 text-center py-2">
+                      Nenhuma pesagem anterior registrada
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Novo peso */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-blue-700 mb-1">
+                    Novo Peso (kg) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Peso atual"
+                    value={pesagemLoteData[animalSelecionadoPesagem.id] || ''}
+                    onChange={(e) => setPesagemLoteData({
+                      ...pesagemLoteData,
+                      [animalSelecionadoPesagem.id]: parseFloat(e.target.value) || 0
+                    })}
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Seção de Medicamento */}
+              <div className="border-t border-blue-200 pt-4">
+                <div className="flex items-center mb-3">
+                  <input
+                    type="checkbox"
+                    id="aplicarMedicamento"
+                    checked={medicamentoAplicado.aplicar}
+                    onChange={(e) => setMedicamentoAplicado({
+                      ...medicamentoAplicado,
+                      aplicar: e.target.checked
+                    })}
+                    className="mr-2"
+                  />
+                  <label htmlFor="aplicarMedicamento" className="text-sm font-medium text-blue-700">
+                    Aplicar Medicamento
+                  </label>
+                </div>
+
+                {medicamentoAplicado.aplicar && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-blue-700 mb-1">
+                        Medicamento *
+                      </label>
+                      <select
+                        value={medicamentoAplicado.medicamento}
+                        onChange={(e) => setMedicamentoAplicado({
+                          ...medicamentoAplicado,
+                          medicamento: e.target.value
+                        })}
+                        className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Selecione o medicamento</option>
+                        {medicamentos.filter(m => m.quantidade > 0).map(medicamento => (
+                          <option key={medicamento.id} value={medicamento.id}>
+                            {medicamento.nome} - Estoque: {medicamento.quantidade} {medicamento.unidade}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-blue-700 mb-1">
+                        Dosagem *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="Quantidade"
+                        value={medicamentoAplicado.dosagem}
+                        onChange={(e) => setMedicamentoAplicado({
+                          ...medicamentoAplicado,
+                          dosagem: e.target.value
+                        })}
+                        className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-blue-700 mb-1">
+                        Unidade
+                      </label>
+                      <select
+                        value={medicamentoAplicado.unidade}
+                        onChange={(e) => setMedicamentoAplicado({
+                          ...medicamentoAplicado,
+                          unidade: e.target.value
+                        })}
+                        className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="ml">mL</option>
+                        <option value="g">Gramas</option>
+                        <option value="l">Litros</option>
+                        <option value="dose">Dose</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-4">
+                <button
+                  onClick={() => {
+                    setAnimalSelecionadoPesagem(null);
+                    setUltimasPesagens([]);
+                    setMedicamentoAplicado({ aplicar: false, medicamento: '', dosagem: '', unidade: 'ml' });
+                  }}
+                  className="px-4 py-2 text-blue-600 hover:text-blue-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={processarPesagemIndividual}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                >
+                  <Scale className="w-4 h-4" />
+                  <span>Registrar Pesagem</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Lista de Animais para Seleção */}
           <div className="mb-6">
-            <h4 className="text-md font-medium text-gray-900 mb-4">Animais Ativos</h4>
+            <h4 className="text-md font-medium text-gray-900 mb-4">
+              Selecione um Animal para Pesagem Individual
+            </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {animais.filter(animal => animal.status !== 'vendido' && animal.status !== 'morto').map((animal) => (
-                <div key={animal.id} className="p-4 border border-gray-200 rounded-lg">
+                <div 
+                  key={animal.id} 
+                  className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                    animalSelecionadoPesagem?.id === animal.id 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => {
+                    setAnimalSelecionadoPesagem(animal);
+                    setUltimasPesagens(buscarUltimasPesagens(animal.id));
+                    setPesagemLoteData({ [animal.id]: '' });
+                  }}
+                >
                   <div className="flex justify-between items-center mb-2">
                     <span className="font-medium">{animal.brinco}</span>
                     <span className="text-sm text-gray-600">{animal.raca}</span>
@@ -2178,43 +2953,68 @@ export default function RebanhoManager() {
                   <div className="text-sm text-gray-600 mb-2">
                     Peso atual: {animal.pesoAtual} kg
                   </div>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="Novo peso (kg)"
-                    value={pesagemLoteData[animal.id] || ''}
-                    onChange={(e) => setPesagemLoteData({
-                      ...pesagemLoteData,
-                      [animal.id]: parseFloat(e.target.value) || 0
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                  />
+                  <div className="text-xs text-gray-500">
+                    Fase: {animal.fase} | GMD: {(animal.gmd || 0).toFixed(3)} kg/dia
+                  </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="flex justify-end space-x-3">
-            <button
-              onClick={() => setShowPesagemLoteModal(false)}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={processarPesagemLote}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
-            >
-              <Scale className="w-4 h-4" />
-              <span>Processar Pesagem</span>
-            </button>
-          </div>
+          {/* Pesagem em Lote (modo original) */}
+          {!animalSelecionadoPesagem && (
+            <>
+              <div className="mb-6">
+                <h4 className="text-md font-medium text-gray-900 mb-4">Pesagem em Lote - Todos os Animais</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {animais.filter(animal => animal.status !== 'vendido' && animal.status !== 'morto').map((animal) => (
+                    <div key={animal.id} className="p-4 border border-gray-200 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-medium">{animal.brinco}</span>
+                        <span className="text-sm text-gray-600">{animal.raca}</span>
+                      </div>
+                      <div className="text-sm text-gray-600 mb-2">
+                        Peso atual: {animal.pesoAtual} kg
+                      </div>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="Novo peso (kg)"
+                        value={pesagemLoteData[animal.id] || ''}
+                        onChange={(e) => setPesagemLoteData({
+                          ...pesagemLoteData,
+                          [animal.id]: parseFloat(e.target.value) || 0
+                        })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowPesagemLoteModal(false)}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={processarPesagemLote}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                >
+                  <Scale className="w-4 h-4" />
+                  <span>Processar Pesagem em Lote</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     )
   );
 
-  // Modal de Nascimento - FUNCIONALIDADE SOLICITADA COM CAMPO BRINCO DA MÃE OBRIGATÓRIO
+  // Modal de Nascimento - FUNCIONALIDADE SOLICITADA COM CAMPO BRINCO DA MÃE OBRIGATÓRIO E FOTO
   const renderNascimentoModal = () => (
     showNascimentoModal && (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -2336,6 +3136,49 @@ export default function RebanhoManager() {
             </div>
           </div>
 
+          {/* Seção de Upload de Foto */}
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Foto do Nascimento
+            </label>
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
+              {previewFoto ? (
+                <div className="relative">
+                  <img 
+                    src={previewFoto} 
+                    alt="Preview da foto do nascimento" 
+                    className="w-full h-48 object-cover rounded-lg"
+                  />
+                  <button
+                    onClick={() => {
+                      setFotoNascimento(null);
+                      setPreviewFoto(null);
+                    }}
+                    className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <Camera className="w-12 h-12 mx-auto text-gray-400 mb-2" />
+                  <p className="text-sm text-gray-600 mb-2">Adicione uma foto do nascimento</p>
+                  <label className="cursor-pointer inline-flex items-center space-x-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors">
+                    <Upload className="w-4 h-4" />
+                    <span>Selecionar Foto</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFotoUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <p className="text-xs text-gray-500 mt-2">Máximo 5MB - JPG, PNG, GIF</p>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="mt-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Observações
@@ -2347,6 +3190,23 @@ export default function RebanhoManager() {
               rows={3}
               placeholder="Observações sobre o nascimento..."
             />
+          </div>
+
+          {/* Informação sobre aplicação de A D E */}
+          <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-start space-x-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <Info className="w-5 h-5 text-blue-600" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-medium text-blue-900 mb-2">Protocolo Sanitário Obrigatório</h4>
+                <div className="text-sm text-blue-800 space-y-1">
+                  <p><strong>• Aplicação imediata:</strong> 3 mL de A D E no nascimento</p>
+                  <p><strong>• Próxima aplicação:</strong> Com 60 dias de vida</p>
+                  <p><strong>• Registro automático:</strong> O sistema criará lembretes para você</p>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="flex justify-end space-x-3 mt-6">
@@ -2601,6 +3461,183 @@ export default function RebanhoManager() {
             >
               <ShoppingCart className="w-4 h-4" />
               <span>Registrar Aquisição</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  );
+
+  // Modal de Manga - NOVA FUNCIONALIDADE SOLICITADA
+  const renderMangaModal = () => (
+    showMangaModal && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">
+              {editingItem ? 'Editar Manga' : 'Adicionar Manga'}
+            </h3>
+            <button
+              onClick={() => setShowMangaModal(false)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Nome da Manga *
+              </label>
+              <input
+                type="text"
+                value={formData.nomeManga || ''}
+                onChange={(e) => setFormData({...formData, nomeManga: e.target.value})}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 ${
+                  formErrors.nomeManga ? 'border-red-500' : 'border-gray-300'
+                }`}
+                placeholder="Ex: Manga 1, Manga A, etc."
+              />
+              {formErrors.nomeManga && (
+                <p className="text-red-500 text-xs mt-1">{formErrors.nomeManga}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Tamanho em Hectares *
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={formData.tamanhoHa || ''}
+                onChange={(e) => setFormData({...formData, tamanhoHa: parseFloat(e.target.value) || 0})}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 ${
+                  formErrors.tamanhoHa ? 'border-red-500' : 'border-gray-300'
+                }`}
+                placeholder="Ex: 5.5"
+              />
+              {formErrors.tamanhoHa && (
+                <p className="text-red-500 text-xs mt-1">{formErrors.tamanhoHa}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Status *
+              </label>
+              <select
+                value={formData.statusManga || ''}
+                onChange={(e) => setFormData({...formData, statusManga: e.target.value})}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 ${
+                  formErrors.statusManga ? 'border-red-500' : 'border-gray-300'
+                }`}
+              >
+                <option value="">Selecione o status</option>
+                <option value="descanso">Descanso</option>
+                <option value="lotacao">Lotação</option>
+                <option value="reforma pasto">Reforma Pasto</option>
+              </select>
+              {formErrors.statusManga && (
+                <p className="text-red-500 text-xs mt-1">{formErrors.statusManga}</p>
+              )}
+            </div>
+
+            {formData.statusManga === 'lotacao' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Data Entrada do Rebanho *
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.dataEntradaRebanho || ''}
+                    onChange={(e) => setFormData({...formData, dataEntradaRebanho: e.target.value})}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 ${
+                      formErrors.dataEntradaRebanho ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                  />
+                  {formErrors.dataEntradaRebanho && (
+                    <p className="text-red-500 text-xs mt-1">{formErrors.dataEntradaRebanho}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Data Saída do Rebanho
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.dataSaidaRebanho || ''}
+                    onChange={(e) => setFormData({...formData, dataSaidaRebanho: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          {formData.statusManga === 'lotacao' && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Brincos do Rebanho *
+              </label>
+              <textarea
+                value={formData.brincosRebanho || ''}
+                onChange={(e) => setFormData({...formData, brincosRebanho: e.target.value})}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 ${
+                  formErrors.brincosRebanho ? 'border-red-500' : 'border-gray-300'
+                }`}
+                rows={3}
+                placeholder="Digite os brincos separados por vírgula. Ex: 001, 002, 003, 004"
+              />
+              {formErrors.brincosRebanho && (
+                <p className="text-red-500 text-xs mt-1">{formErrors.brincosRebanho}</p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Separe os brincos por vírgula. O sistema alertará quando estiver próximo dos 15 dias de lotação.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Observações
+            </label>
+            <textarea
+              value={formData.observacoes || ''}
+              onChange={(e) => setFormData({...formData, observacoes: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              rows={3}
+              placeholder="Observações sobre a manga..."
+            />
+          </div>
+
+          {/* Informações sobre o sistema de alertas */}
+          <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+            <h4 className="text-sm font-medium text-blue-900 mb-2">Sistema de Alertas Automático</h4>
+            <ul className="text-xs text-blue-700 space-y-1">
+              <li>• Cada manga em lotação tem prazo de 15 dias</li>
+              <li>• Alerta será exibido quando faltarem 3 dias (12º dia)</li>
+              <li>• Alerta crítico quando passar de 15 dias</li>
+              <li>• Alertas aparecem no dashboard e na navegação</li>
+            </ul>
+          </div>
+
+          <div className="flex justify-end space-x-3 mt-6">
+            <button
+              onClick={() => setShowMangaModal(false)}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={adicionarManga}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+            >
+              <TreePine className="w-4 h-4" />
+              <span>{editingItem ? 'Atualizar' : 'Adicionar'} Manga</span>
             </button>
           </div>
         </div>
@@ -3254,13 +4291,33 @@ export default function RebanhoManager() {
     </>
   );
 
+  // Verificar se usuário está logado
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      {renderNavigation()}
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar */}
+      {renderSidebar()}
       
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {renderContent()}
-      </main>
+      {/* Main Content */}
+      <div className="flex-1 lg:ml-64">
+        {/* Header */}
+        {renderHeader()}
+        
+        {/* Page Content */}
+        <main className="px-4 sm:px-6 lg:px-8 py-8">
+          {renderContent()}
+        </main>
+      </div>
 
       {/* Modais */}
       {renderDetailModal()}
@@ -3268,6 +4325,7 @@ export default function RebanhoManager() {
       {renderPesagemLoteModal()}
       {renderNascimentoModal()}
       {renderAquisicaoModal()}
+      {renderMangaModal()}
       {renderHistoricoModal()}
       {renderFormModals()}
     </div>
